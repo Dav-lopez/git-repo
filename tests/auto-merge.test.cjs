@@ -1,0 +1,117 @@
+'use strict';
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const { run } = require('../.github/scripts/auto-merge.cjs');
+
+function fixture({ draft = false, mergeable = true, mergeable_state = 'clean', checkStatus = 'success', fork = false, external = false, dryRun = false, include, exclude } = {}) {
+  const calls = { merges: [], ready: [], logs: [], warnings: [] };
+  const owner = 'Dav-lopez', repo = 'sample';
+  const repository = { name: repo, full_name: owner + '/' + repo, owner: { login: owner }, archived: false, disabled: false, fork };
+  const pr = { state: 'open', merged: false, number: 7, node_id: 'PR_node', head: { sha: 'deadbeef', repo: { full_name: external ? 'other/sample' : repository.full_name } }, draft, mergeable, mergeable_state };
+  const github = {
+    rest: {
+      repos: {
+        listForAuthenticatedUser: () => {},
+        getCombinedStatusForRef: async () => ({ data: { statuses: [] } }),
+      },
+      pulls: {
+        list: () => {},
+        get: async () => ({ data: pr }),
+        merge: async (args) => { calls.merges.push(args); return { data: { merged: true } }; },
+      },
+      checks: { listForRef: () => {} },
+    },
+    paginate: async (func) => {
+      if (func === github.rest.repos.listForAuthenticatedUser) return [repository];
+      if (func === github.rest.pulls.list) return [{ number: 7 }];
+      if (func === github.rest.checks.listForRef) return checkStatus === 'none' ? [] : [{ name: 'unit-tests', status: checkStatus === 'pending' ? 'in_progress' : 'completed', conclusion: checkStatus === 'pending' ? null : checkStatus }];
+      throw new Error('Unexpected paginate call');
+    },
+    graphql: async (q, values) => { calls.ready.push(values.id); return {}; },
+  };
+  const core = { info: message => calls.logs.push(message), warning: message => calls.warnings.push(message) };
+  return { calls, task: { github, core, owner, dryRun, include, exclude }, pr };
+}
+
+test('squash merges clean ready PR with exact head SHA', async () => {
+  const { task, calls } = fixture();
+  const result = await run(task);
+  assert.equal(result.merged, 1);
+  assert.deepEqual(calls.merges, [{ owner: 'Dav-lopez', repo: 'sample', pull_number: 7, sha: 'deadbeef', merge_method: 'squash' }]);
+});
+
+test('includes draft PRs by marking ready; never merges the same pass', async () => {
+  const { task, calls } = fixture({ draft: true, mergeable_state: 'draft' });
+  const result = await run(task);
+  assert.equal(result.draftsReady, 1);
+  assert.deepEqual(calls.ready, ['PR_node']);
+  assert.equal(calls.merges.length, 0);
+});
+
+test('conflicting PR is skipped', async () => {
+  const { task, calls } = fixture({ mergeable: false, mergeable_state: 'dirty' });
+  assert.equal((await run(task)).skipped, 1);
+  assert.equal(calls.merges.length, 0);
+});
+
+test('blocked non-draft is skipped', async () => {
+  const { task, calls } = fixture({ mergeable_state: 'blocked' });
+  assert.equal((await run(task)).skipped, 1);
+  assert.equal(calls.merges.length, 0);
+});
+
+test('failed CI prevents merging', async () => {
+  const { task, calls } = fixture({ checkStatus: 'failure' });
+  assert.equal((await run(task)).skipped, 1);
+  assert.equal(calls.merges.length, 0);
+});
+
+test('pending CI prevents merging', async () => {
+  const { task, calls } = fixture({ checkStatus: 'pending' });
+  assert.equal((await run(task)).skipped, 1);
+  assert.equal(calls.merges.length, 0);
+});
+
+test('clean PR with no configured CI can merge', async () => {
+  const { task, calls } = fixture({ checkStatus: 'none' });
+  assert.equal((await run(task)).merged, 1);
+  assert.equal(calls.merges.length, 1);
+});
+
+test('skips external-branch PR by default', async () => {
+  const { task, calls } = fixture({ external: true });
+  assert.equal((await run(task)).skipped, 1);
+  assert.equal(calls.merges.length, 0);
+});
+
+test('dry run never merges or removes draft state', async () => {
+  const { task, calls } = fixture({ draft: true, dryRun: true, mergeable_state: 'draft' });
+  assert.equal((await run(task)).draftsReady, 1);
+  assert.deepEqual(calls.ready, []);
+  assert.deepEqual(calls.merges, []);
+});
+
+test('include filter scopes repositories', async () => {
+  const { task, calls } = fixture({ include: 'some-other-repo' });
+  assert.equal((await run(task)).repos, 0);
+  assert.equal(calls.merges.length, 0);
+});
+
+test('exclusions block repositories', async () => {
+  const { task, calls } = fixture({ exclude: 'sample' });
+  assert.equal((await run(task)).repos, 0);
+  assert.equal(calls.merges.length, 0);
+});
+
+test('status failure blocks even when check run passed', async () => {
+  const { task, calls } = fixture();
+  task.github.rest.repos.getCombinedStatusForRef = async () => ({ data: { statuses: [{ context: 'deploy', state: 'failure' }] } });
+  assert.equal((await run(task)).skipped, 1);
+  assert.equal(calls.merges.length, 0);
+});
+
+test('requires explicit account owner', async () => {
+  const { task } = fixture();
+  task.owner = '';
+  await assert.rejects(run(task), /OWNER/);
+});
