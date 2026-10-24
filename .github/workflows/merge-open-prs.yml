@@ -2,8 +2,9 @@ name: Merge eligible open PRs
 
 on:
   schedule:
-    # Stagger off minute 0; GitHub may drop schedules during peak load.
-    - cron: '7,27,47 * * * *'
+    # Change this cron to refresh GitHub's schedule registration/actor when scheduled events stall.
+    # Keep 20-minute intervals offset from minute 0 to avoid peak load.
+    - cron: '17,37,57 * * * *'
   push:
     branches: [main]
     paths:
