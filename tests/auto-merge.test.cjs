@@ -168,7 +168,7 @@ test('direct lookup of missing listed private repo restores scanning', async () 
   assert.equal(result.directlyDiscovered, 1);
   assert.deepEqual(calls.probes, ['drugai']);
   assert.equal(calls.failures.length, 0);
-  assert.equal(result.merged, 2);
+  assert.equal(result.merged, 1); // fixture's second PR has a cross-repository head
 });
 
 test('direct GET is not required when repository already appears in listing', async () => {
