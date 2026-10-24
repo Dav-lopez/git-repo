@@ -5,14 +5,14 @@ A central GitHub Actions workflow checks non-archived, non-fork repositories own
 ## Merge policy
 
 - Checks each open PR and, if eligible, merges with squash.
-- Draft PRs are converted to Ready for review if conflict-free and all reported CI is complete and non-failing. They are reconsidered on a subsequent run; GitHub cannot merge draft PRs directly.
-- Requires mergeable=true and, for non-drafts, mergeable_state=clean.
-- Skips failed or pending CI, merge conflicts, and rules that block a clean merge. GitHub branch protection and approval requirements apply.
+- Draft PRs are converted to Ready for review when conflict-free, even if CI is failing or pending. They are reconsidered on a subsequent run; GitHub cannot merge draft PRs directly.
+- Requires GitHub's mergeable=true (no file-level conflict); skips false and unknown/null mergeability.
+- Deliberately ignores failing/pending CI and mergeable_state=unstable/blocked. GitHub may still reject the merge under branch protections, repository rulesets, or required approvals; the bot never bypasses GitHub's enforcement.
 - Merge uses the exact head SHA, rejecting a merge if new commits arrive after inspection.
 - Skips cross-repository branches and forked/archived repositories by default. Maximum 10 merges per run.
-- PRs WITHOUT CONFIGURED CI can merge if GitHub reports them clean. Configure required checks in important projects.
+- PRs may merge even with failing or pending CI. This can introduce broken code. Use repository-level required checks if you want protection to override this automation.
 
-WARNING: When enabled, this merges old and new PRs across every accessible owned repository, including drafts after conversion. Consider setting an inclusion list before providing the token.
+WARNING: This merges old and new conflict-free PRs across every accessible owned repository, including drafts after conversion, WITHOUT blocking on failed CI. Consider setting an inclusion list. If a repository must never accept failing checks, make them required through GitHub branch protection/rulesets.
 
 ## One-time manual setup
 
@@ -34,4 +34,4 @@ The script respects branch protections and repository rulesets, and logs errors 
 
 Run: node --test tests/auto-merge.test.cjs (Node.js 22).
 
-Mocked tests cover clean merges, draft conversion, conflicts, blocked PRs, failed/pending/no CI, external PRs, dry-run and filtering. The script uses the Octokit client supplied by actions/github-script.
+Mocked tests cover conflict-free merges despite failed/pending CI or blocked state, draft conversion, conflicts, unknown mergeability, GitHub protection errors, external PRs, dry-run and repository filters. The script uses the Octokit client supplied by actions/github-script.
