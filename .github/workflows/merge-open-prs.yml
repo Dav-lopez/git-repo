@@ -45,6 +45,7 @@ jobs:
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
           INCLUDE_REPOS: ${{ vars.AUTO_MERGE_INCLUDE_REPOS }}
           EXCLUDE_REPOS: ${{ vars.AUTO_MERGE_EXCLUDE_REPOS }}
+          EXPECTED_REPOS: ${{ vars.AUTO_MERGE_EXPECTED_REPOS || 'nigeria-finops-platform,drugai,mid-elections,The_Last_Decision_Day' }}
         with:
           github-token: ${{ secrets.AUTO_MERGE_TOKEN }}
           script: |
@@ -55,4 +56,5 @@ jobs:
               dryRun: process.env.DRY_RUN === 'true',
               include: process.env.INCLUDE_REPOS,
               exclude: process.env.EXCLUDE_REPOS,
+              expected: process.env.EXPECTED_REPOS,
             });
