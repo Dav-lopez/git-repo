@@ -1,0 +1,53 @@
+name: Merge eligible open PRs
+
+on:
+  schedule:
+    - cron: '*/20 * * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Review decisions without modifying PRs'
+        type: boolean
+        default: true
+
+# The controller GITHUB_TOKEN only reads this repo. Cross-repo writes require
+# the explicit AUTO_MERGE_TOKEN secret.
+permissions:
+  contents: read
+
+concurrency:
+  group: merge-open-prs
+  cancel-in-progress: false
+
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check merge token
+        env:
+          AUTO_MERGE_TOKEN: ${{ secrets.AUTO_MERGE_TOKEN }}
+        run: |
+          if [[ -z "$AUTO_MERGE_TOKEN" ]]; then
+            echo 'Missing AUTO_MERGE_TOKEN repository secret. See README.' >&2
+            exit 1
+          fi
+      - name: Scan and merge owned repositories
+        uses: actions/github-script@v7
+        env:
+          OWNER: Dav-lopez
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+          INCLUDE_REPOS: ${{ vars.AUTO_MERGE_INCLUDE_REPOS }}
+          EXCLUDE_REPOS: ${{ vars.AUTO_MERGE_EXCLUDE_REPOS }}
+        with:
+          github-token: ${{ secrets.AUTO_MERGE_TOKEN }}
+          script: |
+            const { run } = require('./.github/scripts/auto-merge.cjs');
+            await run({
+              github, core,
+              owner: process.env.OWNER,
+              dryRun: process.env.DRY_RUN === 'true',
+              include: process.env.INCLUDE_REPOS,
+              exclude: process.env.EXCLUDE_REPOS,
+            });
