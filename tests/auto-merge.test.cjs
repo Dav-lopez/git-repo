@@ -3,8 +3,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { run } = require('../.github/scripts/auto-merge.cjs');
 
-function fixture({ draft = false, mergeable = true, mergeable_state = 'clean', checkStatus = 'success', fork = false, external = false, dryRun = false, include, exclude, expected } = {}) {
-  const calls = { merges: [], ready: [], logs: [], warnings: [], failures: [] };
+function fixture({ draft = false, mergeable = true, mergeable_state = 'clean', checkStatus = 'success', fork = false, external = false, dryRun = false, include, exclude, expected, directAllowed = false } = {}) {
+  const calls = { merges: [], ready: [], logs: [], warnings: [], failures: [], probes: [] };
   const owner = 'Dav-lopez', repo = 'sample';
   const repository = { name: repo, full_name: owner + '/' + repo, owner: { login: owner }, archived: false, disabled: false, fork };
   const pr = { state: 'open', merged: false, number: 7, node_id: 'PR_node', head: { sha: 'deadbeef', repo: { full_name: external ? 'other/sample' : repository.full_name } }, draft, mergeable, mergeable_state };
@@ -12,6 +12,11 @@ function fixture({ draft = false, mergeable = true, mergeable_state = 'clean', c
     rest: {
       repos: {
         listForAuthenticatedUser: () => {},
+        get: async ({ owner, repo: requested }) => {
+          calls.probes.push(requested);
+          if (!directAllowed) { const error = new Error('Not Found'); error.status = 404; throw error; }
+          return { data: { name: requested, full_name: owner + '/' + requested, owner: { login: owner }, archived: false, disabled: false, fork: false } };
+        },
         getCombinedStatusForRef: async () => ({ data: { statuses: [] } }),
       },
       pulls: {
@@ -151,5 +156,34 @@ test('PAT missing a critical expected repo fails visibly', async () => {
   const result = await run(task);
   assert.equal(result.errors, 1);
   assert.equal(calls.failures.length, 1);
-  assert.match(calls.warnings[0], /lacks repository visibility/);
+  assert.match(calls.warnings[0], /direct repository lookup failed/);
+});
+
+test('direct lookup of missing listed private repo restores scanning', async () => {
+  const { task, calls } = fixture({ expected: 'drugai', directAllowed: true });
+  const result = await run(task);
+  assert.equal(result.errors, 0);
+  assert.equal(result.listed, 1);
+  assert.equal(result.repos, 2);
+  assert.equal(result.directlyDiscovered, 1);
+  assert.deepEqual(calls.probes, ['drugai']);
+  assert.equal(calls.failures.length, 0);
+  assert.equal(result.merged, 1); // fixture's second PR has a cross-repository head
+});
+
+test('direct GET is not required when repository already appears in listing', async () => {
+  const { task, calls } = fixture({ expected: 'DaV-LoPeZ/SaMpLe', directAllowed: true });
+  const result = await run(task);
+  assert.equal(result.errors, 0);
+  assert.equal(result.directlyDiscovered, 0);
+  assert.deepEqual(calls.probes, []);
+});
+
+test('unreachable repository is reported without stopping other merges', async () => {
+  const { task, calls } = fixture({ expected: 'drugai' });
+  const result = await run(task);
+  assert.equal(result.errors, 1);
+  assert.equal(result.merged, 1);
+  assert.equal(calls.failures.length, 1);
+  assert.deepEqual(calls.probes, ['drugai']);
 });

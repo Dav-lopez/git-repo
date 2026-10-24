@@ -11,30 +11,58 @@ function names(text) {
 
 async function run({ github, core, owner, dryRun = false, allowForks = false, include, exclude, expected, maxMerges = 10 }) {
   if (!owner || !/^[-\w]+$/.test(owner)) throw new Error('OWNER must be a GitHub username');
-  const included = names(include);
-  const excluded = names(exclude);
-  const repos = await github.paginate(github.rest.repos.listForAuthenticatedUser, {
+  const listedRepos = await github.paginate(github.rest.repos.listForAuthenticatedUser, {
     affiliation: 'owner', visibility: 'all', per_page: 100,
   });
-  const eligibleRepos = repos.filter(repo =>
-    repo.owner.login.toLowerCase() === owner.toLowerCase() && !repo.archived &&
-    !repo.disabled && (allowForks || !repo.fork) &&
-    (!included.size || included.has(repo.name.toLowerCase()) || included.has(repo.full_name.toLowerCase())) &&
-    !excluded.has(repo.name.toLowerCase()) && !excluded.has(repo.full_name.toLowerCase())
-  );
-  const totals = { repos: eligibleRepos.length, open: 0, merged: 0, draftsReady: 0, skipped: 0, errors: 0 };
-  // A fine-grained PAT may silently list only its selected repositories.
-  // Explicitly require visibility of critical repositories to avoid false success.
+  const repos = [...listedRepos];
   const visible = new Set(repos
     .filter(r => r.owner.login.toLowerCase() === owner.toLowerCase())
     .flatMap(r => [r.name.toLowerCase(), r.full_name.toLowerCase()]));
-  const missing = [...names(expected)].filter(name => !visible.has(name));
-  if (missing.length) {
-    totals.errors += missing.length;
-    core.warning('AUTO_MERGE_TOKEN lacks repository visibility: ' + missing.join(', ') +
-      '. Update the fine-grained token repository access and Actions secret.');
-  }
+  let directProbes = 0;
+  const inaccessible = [];
 
+  // An incomplete /user/repos listing does not, by itself, prove missing token
+  // access. Probe each missing expected repository directly, and scan it when
+  // the token can actually read it.
+  for (const name of names(expected)) {
+    const parts = name.split('/');
+    if (parts.length > 2 || (parts.length === 2 && parts[0] !== owner.toLowerCase()) ||
+        !/^[a-z0-9_.-]+$/.test(parts[parts.length - 1])) {
+      throw new Error('Invalid expected repository under owner ' + owner + ': ' + name);
+    }
+    const repoName = parts[parts.length - 1];
+    if (visible.has(repoName) || visible.has(owner.toLowerCase() + '/' + repoName)) continue;
+    try {
+      const { data: direct } = await github.rest.repos.get({ owner, repo: repoName });
+      if (direct.owner.login.toLowerCase() !== owner.toLowerCase()) {
+        throw new Error('Repository is not owned by ' + owner);
+      }
+      directProbes++;
+      core.warning(owner + '/' + repoName +
+        ': absent from /user/repos but directly accessible. Including it in scan.');
+      repos.push(direct);
+      visible.add(repoName);
+      visible.add(direct.full_name.toLowerCase());
+    } catch (error) {
+      const status = error.status ? 'HTTP ' + error.status : error.message;
+      inaccessible.push(repoName);
+      core.warning(owner + '/' + repoName + ': direct repository lookup failed (' + status +
+        '). Check token resource owner, repository selection, permissions and secret value.');
+    }
+  }
+  const includedRepos = names(include);
+  const excludedRepos = names(exclude);
+  const eligibleRepos = repos.filter(repo =>
+    repo.owner.login.toLowerCase() === owner.toLowerCase() && !repo.archived &&
+    !repo.disabled && (allowForks || !repo.fork) &&
+    (!includedRepos.size || includedRepos.has(repo.name.toLowerCase()) || includedRepos.has(repo.full_name.toLowerCase())) &&
+    !excludedRepos.has(repo.name.toLowerCase()) && !excludedRepos.has(repo.full_name.toLowerCase())
+  );
+  const totals = { listed: listedRepos.length, repos: eligibleRepos.length, directlyDiscovered: directProbes,
+    open: 0, merged: 0, draftsReady: 0, skipped: 0, errors: inaccessible.length };
+  core.info('Repository discovery: ' + listedRepos.length + ' listed, ' +
+    directProbes + ' additionally accessible by direct API lookup, ' +
+    inaccessible.length + ' inaccessible expected repositories.');
 
   for (const repository of eligibleRepos) {
     const repo = repository.name;
@@ -96,7 +124,7 @@ async function run({ github, core, owner, dryRun = false, allowForks = false, in
   }
   core.info('Summary: ' + JSON.stringify(totals));
   if (totals.errors) {
-    core.warning(totals.errors + ' PR/repository operation(s) failed or are not accessible; see logs.');
+    core.warning(totals.errors + ' repository access or merge operation(s) failed; see logs.');
     core.setFailed('Incomplete PR merge scan: ' + totals.errors + ' access/merge error(s)');
   }
   return totals;
