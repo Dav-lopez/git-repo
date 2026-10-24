@@ -1,6 +1,6 @@
 # GitHub PR Auto-Merger
 
-A central GitHub Actions workflow checks non-archived, non-fork repositories owned by Dav-lopez every 10 minutes, including draft PRs.
+A central GitHub Actions workflow checks non-archived, non-fork repositories owned by Dav-lopez every 5 minutes, including draft PRs.
 
 ## Merge policy
 
@@ -25,7 +25,7 @@ WARNING: This merges old and new conflict-free PRs across every accessible owned
 
 ## Timing and limitations
 
-Cron is 7,17,27,37,47,57 * * * * (UTC), every 10 minutes at minutes :07, :17, :27, :37, :47, and :57. This avoids peak minute :00 because GitHub can delay or drop scheduled events under load; it does not guarantee reliable real-time execution. A push that changes the workflow file on main also triggers one live verification scan. GitHub can disable scheduled workflows in inactive repositories. The controller needs Actions enabled. Check https://github.com/Dav-lopez/git-repo/actions for recent runs with event=schedule.
+Cron is 2-59/5 * * * * (UTC), every 5 minutes at minutes :02, :07, :12, :17, :22, :27, :32, :37, :42, :47, :52, and :57. This avoids peak minute :00 because GitHub can delay or drop scheduled events under load; it does not guarantee reliable real-time execution. A push that changes the workflow file on main also triggers one live verification scan. GitHub can disable scheduled workflows in inactive repositories. The controller needs Actions enabled. Check https://github.com/Dav-lopez/git-repo/actions for recent runs with event=schedule.
 
 The built-in GitHub Actions GITHUB_TOKEN cannot merge pull requests in other repositories. The AUTO_MERGE_TOKEN secret is required for account-wide access.
 
