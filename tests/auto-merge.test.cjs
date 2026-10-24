@@ -54,22 +54,22 @@ test('conflicting PR is skipped', async () => {
   assert.equal(calls.merges.length, 0);
 });
 
-test('blocked non-draft is skipped', async () => {
+test('GitHub-mergeable blocked state is attempted (GitHub rules remain authoritative)', async () => {
   const { task, calls } = fixture({ mergeable_state: 'blocked' });
-  assert.equal((await run(task)).skipped, 1);
-  assert.equal(calls.merges.length, 0);
+  assert.equal((await run(task)).merged, 1);
+  assert.equal(calls.merges.length, 1);
 });
 
-test('failed CI prevents merging', async () => {
-  const { task, calls } = fixture({ checkStatus: 'failure' });
-  assert.equal((await run(task)).skipped, 1);
-  assert.equal(calls.merges.length, 0);
+test('failed CI does not prevent a conflict-free merge', async () => {
+  const { task, calls } = fixture({ checkStatus: 'failure', mergeable_state: 'unstable' });
+  assert.equal((await run(task)).merged, 1);
+  assert.equal(calls.merges.length, 1);
 });
 
-test('pending CI prevents merging', async () => {
-  const { task, calls } = fixture({ checkStatus: 'pending' });
-  assert.equal((await run(task)).skipped, 1);
-  assert.equal(calls.merges.length, 0);
+test('pending CI does not prevent a conflict-free merge', async () => {
+  const { task, calls } = fixture({ checkStatus: 'pending', mergeable_state: 'unstable' });
+  assert.equal((await run(task)).merged, 1);
+  assert.equal(calls.merges.length, 1);
 });
 
 test('clean PR with no configured CI can merge', async () => {
@@ -103,15 +103,38 @@ test('exclusions block repositories', async () => {
   assert.equal(calls.merges.length, 0);
 });
 
-test('status failure blocks even when check run passed', async () => {
+test('failed commit status does not block an otherwise mergeable PR', async () => {
   const { task, calls } = fixture();
   task.github.rest.repos.getCombinedStatusForRef = async () => ({ data: { statuses: [{ context: 'deploy', state: 'failure' }] } });
-  assert.equal((await run(task)).skipped, 1);
-  assert.equal(calls.merges.length, 0);
+  assert.equal((await run(task)).merged, 1);
+  assert.equal(calls.merges.length, 1);
 });
 
 test('requires explicit account owner', async () => {
   const { task } = fixture();
   task.owner = '';
   await assert.rejects(run(task), /OWNER/);
+});
+
+test('unknown GitHub mergeability is skipped until recomputed', async () => {
+  const { task, calls } = fixture({ mergeable: null });
+  assert.equal((await run(task)).skipped, 1);
+  assert.equal(calls.merges.length, 0);
+});
+
+test('draft with failed CI is marked ready but not merged that run', async () => {
+  const { task, calls } = fixture({ draft: true, checkStatus: 'failure', mergeable_state: 'unstable' });
+  const result = await run(task);
+  assert.equal(result.draftsReady, 1);
+  assert.equal(calls.ready.length, 1);
+  assert.equal(calls.merges.length, 0);
+});
+
+test('GitHub merge API rejection is recorded without bypassing protections', async () => {
+  const { task, calls } = fixture({ mergeable_state: 'blocked' });
+  task.github.rest.pulls.merge = async () => { throw new Error('Branch protection prohibits merging'); };
+  const result = await run(task);
+  assert.equal(result.merged, 0);
+  assert.equal(result.errors, 1);
+  assert.equal(calls.warnings.length, 2);
 });
