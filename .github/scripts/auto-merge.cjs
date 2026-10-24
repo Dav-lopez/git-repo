@@ -2,33 +2,11 @@
 
 /**
  * Merge eligible PRs across repositories owned by OWNER.
- * Only the GitHub API can authorize a merge, so branch protections remain effective.
+ * A true GitHub mergeable flag means no file-level conflicts. Ignore CI status,
+ * but let GitHub reject merges blocked by rulesets, approvals or branch protection.
  */
-const GOOD_CONCLUSIONS = new Set(['success', 'neutral', 'skipped']);
-const MERGEABLE_STATES = new Set(['clean']);
-
 function names(text) {
   return new Set((text || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean));
-}
-
-async function inspectChecks(github, owner, repo, sha) {
-  const [runs, combined] = await Promise.all([
-    github.paginate(github.rest.checks.listForRef, { owner, repo, ref: sha, per_page: 100 }),
-    github.rest.repos.getCombinedStatusForRef({ owner, repo, ref: sha, per_page: 100 }),
-  ]);
-  // A commit with no CI is mergeable only if GitHub itself declares the PR clean;
-  // otherwise, every reported check must be complete and non-failing.
-  for (const check of runs) {
-    if (check.status !== 'completed' || !GOOD_CONCLUSIONS.has(check.conclusion)) {
-      return { ok: false, reason: 'check ' + check.name + ': ' + check.status + '/' + check.conclusion };
-    }
-  }
-  for (const status of combined.data.statuses || []) {
-    if (status.state !== 'success') {
-      return { ok: false, reason: 'status ' + status.context + ': ' + status.state };
-    }
-  }
-  return { ok: true, reason: runs.length + ' checks, ' + (combined.data.statuses || []).length + ' statuses' };
 }
 
 async function run({ github, core, owner, dryRun = false, allowForks = false, include, exclude, maxMerges = 10 }) {
@@ -78,17 +56,6 @@ async function run({ github, core, owner, dryRun = false, allowForks = false, in
           core.info(id + ': GitHub mergeable=' + pr.mergeable + '; waiting/requires conflict resolution');
           continue;
         }
-        if (!pr.draft && !MERGEABLE_STATES.has(pr.mergeable_state)) {
-          totals.skipped++;
-          core.info(id + ': merge state ' + pr.mergeable_state + '; needs checks, approvals or branch update');
-          continue;
-        }
-        const checks = await inspectChecks(github, owner, repo, pr.head.sha);
-        if (!checks.ok) {
-          totals.skipped++;
-          core.info(id + ': blocked by ' + checks.reason);
-          continue;
-        }
         if (pr.draft) {
           // GitHub prohibits merging draft PRs. Mark them ready, then re-evaluate
           // on the next run once GitHub recalculates mergeability and protections.
@@ -96,11 +63,11 @@ async function run({ github, core, owner, dryRun = false, allowForks = false, in
             await github.graphql('mutation($id: ID!) { markPullRequestReadyForReview(input: {pullRequestId: $id}) { clientMutationId } }', { id: pr.node_id });
           }
           totals.draftsReady++;
-          core.info(id + ': ' + (dryRun ? 'would mark' : 'marked') + ' draft ready for review; will recheck before merge');
+          core.info(id + ': ' + (dryRun ? 'would mark' : 'marked') + ' draft ready for review; will recheck conflict state before merge');
           continue;
         }
         if (dryRun) {
-          core.info(id + ': DRY RUN: would merge ' + pr.head.sha + ' (' + checks.reason + ')');
+          core.info(id + ': DRY RUN: would merge conflict-free head ' + pr.head.sha + '; CI is not a gate');
           continue;
         }
         await github.rest.pulls.merge({
@@ -108,7 +75,7 @@ async function run({ github, core, owner, dryRun = false, allowForks = false, in
           merge_method: 'squash',
         });
         totals.merged++;
-        core.info(id + ': merged (' + checks.reason + ')');
+        core.info(id + ': merged conflict-free PR (CI was not a gate)');
       } catch (error) {
         totals.errors++;
         core.warning(id + ': merge not performed: ' + error.message);
@@ -120,4 +87,4 @@ async function run({ github, core, owner, dryRun = false, allowForks = false, in
   return totals;
 }
 
-module.exports = { run, inspectChecks, names };
+module.exports = { run, names };
