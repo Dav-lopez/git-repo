@@ -25,7 +25,7 @@ WARNING: This merges old and new conflict-free PRs across every accessible owned
 
 ## Timing and limitations
 
-Cron is 7,27,47 * * * * (UTC), every 20 minutes at minutes :07, :27, and :47. This avoids peak minute :00 because GitHub can delay or drop scheduled events under load; it does not guarantee reliable real-time execution. A push that changes the workflow file on main also triggers one live verification scan. GitHub can disable scheduled workflows in inactive repositories. The controller needs Actions enabled. Check https://github.com/Dav-lopez/git-repo/actions for recent runs with event=schedule.
+Cron is 17,37,57 * * * * (UTC), every 20 minutes at minutes :17, :37, and :57. This avoids peak minute :00 because GitHub can delay or drop scheduled events under load; it does not guarantee reliable real-time execution. A push that changes the workflow file on main also triggers one live verification scan. GitHub can disable scheduled workflows in inactive repositories. The controller needs Actions enabled. Check https://github.com/Dav-lopez/git-repo/actions for recent runs with event=schedule.
 
 The built-in GitHub Actions GITHUB_TOKEN cannot merge pull requests in other repositories. The AUTO_MERGE_TOKEN secret is required for account-wide access.
 
@@ -42,3 +42,7 @@ Mocked tests cover conflict-free merges despite failed/pending CI or blocked sta
 A private repository absent from GET /user/repos does **not** conclusively prove incorrect access. The agent explicitly probes each expected repository through GET /repos/{owner}/{repo}. A successful direct probe adds that repository to its scan and reports the discovery gap; a failed probe logs the HTTP status (for example, 403 or 404) and marks the run incomplete.
 
 If the direct request fails, verify that the fine-grained token's resource owner is Dav-lopez, that it grants repository metadata read and pull requests read/write (and Contents write when required), and that the current value of AUTO_MERGE_TOKEN in the controller Actions secrets matches the token you edited. Never paste the token into ChatGPT or source code. Missing repositories not included in AUTO_MERGE_EXPECTED_REPOS cannot be detected by this check.
+
+## Scheduled-run troubleshooting
+
+If the workflow has successful `workflow_dispatch` runs but zero `schedule` events, inspect its enabled status in GitHub Actions and confirm its workflow YAML is on the default branch. Editing the cron expression can refresh the scheduling actor, but it does not guarantee execution. If repeated schedules never trigger after re-registration, ask GitHub Support to check scheduled-event delivery; no script change can execute a workflow that GitHub never starts.
