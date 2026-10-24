@@ -9,7 +9,7 @@ function names(text) {
   return new Set((text || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean));
 }
 
-async function run({ github, core, owner, dryRun = false, allowForks = false, include, exclude, maxMerges = 10 }) {
+async function run({ github, core, owner, dryRun = false, allowForks = false, include, exclude, expected, maxMerges = 10 }) {
   if (!owner || !/^[-\w]+$/.test(owner)) throw new Error('OWNER must be a GitHub username');
   const included = names(include);
   const excluded = names(exclude);
@@ -23,6 +23,18 @@ async function run({ github, core, owner, dryRun = false, allowForks = false, in
     !excluded.has(repo.name.toLowerCase()) && !excluded.has(repo.full_name.toLowerCase())
   );
   const totals = { repos: eligibleRepos.length, open: 0, merged: 0, draftsReady: 0, skipped: 0, errors: 0 };
+  // A fine-grained PAT may silently list only its selected repositories.
+  // Explicitly require visibility of critical repositories to avoid false success.
+  const visible = new Set(repos
+    .filter(r => r.owner.login.toLowerCase() === owner.toLowerCase())
+    .flatMap(r => [r.name.toLowerCase(), r.full_name.toLowerCase()]));
+  const missing = [...names(expected)].filter(name => !visible.has(name));
+  if (missing.length) {
+    totals.errors += missing.length;
+    core.warning('AUTO_MERGE_TOKEN lacks repository visibility: ' + missing.join(', ') +
+      '. Update the fine-grained token repository access and Actions secret.');
+  }
+
 
   for (const repository of eligibleRepos) {
     const repo = repository.name;
@@ -83,7 +95,10 @@ async function run({ github, core, owner, dryRun = false, allowForks = false, in
     }
   }
   core.info('Summary: ' + JSON.stringify(totals));
-  if (totals.errors) core.warning(totals.errors + ' PR/repository operation(s) failed; see logs.');
+  if (totals.errors) {
+    core.warning(totals.errors + ' PR/repository operation(s) failed or are not accessible; see logs.');
+    core.setFailed('Incomplete PR merge scan: ' + totals.errors + ' access/merge error(s)');
+  }
   return totals;
 }
 

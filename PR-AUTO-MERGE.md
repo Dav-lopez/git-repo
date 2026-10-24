@@ -21,6 +21,7 @@ WARNING: This merges old and new conflict-free PRs across every accessible owned
 3. In https://github.com/Dav-lopez/git-repo/settings/secrets/actions create the Actions secret AUTO_MERGE_TOKEN containing that token. Do not commit tokens.
 4. Optionally set the Actions variable AUTO_MERGE_INCLUDE_REPOS at https://github.com/Dav-lopez/git-repo/settings/variables/actions to a comma-separated list such as drugai,nigeria-finops-platform,The_Last_Decision_Day,mid-elections. If unset, ALL accessible owned non-fork repositories are scanned. AUTO_MERGE_EXCLUDE_REPOS is an optional exclusion list.
 5. In Actions > Merge eligible open PRs > Run workflow, start with dry_run=true to inspect decisions, then use dry_run=false to merge, or permit the next scheduled run.
+6. The workflow checks visibility of four critical repositories by default: nigeria-finops-platform, drugai, mid-elections, and The_Last_Decision_Day. If the PAT cannot see one, the job ends in failure and names the missing repository. Set the Actions variable AUTO_MERGE_EXPECTED_REPOS to update this comma-separated list as projects change. Give AUTO_MERGE_TOKEN access to every intended repository, including private ones. A GitHub-connected ChatGPT account does not grant permissions to the separate token in the Actions secret.
 
 ## Timing and limitations
 
@@ -35,3 +36,7 @@ The script respects branch protections and repository rulesets, and logs errors 
 Run: node --test tests/auto-merge.test.cjs (Node.js 22).
 
 Mocked tests cover conflict-free merges despite failed/pending CI or blocked state, draft conversion, conflicts, unknown mergeability, GitHub protection errors, external PRs, dry-run and repository filters. The script uses the Octokit client supplied by actions/github-script.
+
+## Diagnosing missing PRs
+
+A successful script scan that reports fewer repositories than your account actually owns can indicate fine-grained token repository-selection restrictions. The scanner excludes archived/forked repositories, but a private, owned, non-fork repository should be visible when the token is configured correctly. Check the workflow logs for `AUTO_MERGE_TOKEN lacks repository visibility` and add missing repositories to the token's GitHub repository permissions, then update the token secret if you regenerated the token. The workflow flags missing expected repositories but cannot prove access to every repository unless all are listed.
