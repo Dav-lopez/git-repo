@@ -3,8 +3,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { run } = require('../.github/scripts/auto-merge.cjs');
 
-function fixture({ draft = false, mergeable = true, mergeable_state = 'clean', checkStatus = 'success', fork = false, external = false, dryRun = false, include, exclude } = {}) {
-  const calls = { merges: [], ready: [], logs: [], warnings: [] };
+function fixture({ draft = false, mergeable = true, mergeable_state = 'clean', checkStatus = 'success', fork = false, external = false, dryRun = false, include, exclude, expected } = {}) {
+  const calls = { merges: [], ready: [], logs: [], warnings: [], failures: [] };
   const owner = 'Dav-lopez', repo = 'sample';
   const repository = { name: repo, full_name: owner + '/' + repo, owner: { login: owner }, archived: false, disabled: false, fork };
   const pr = { state: 'open', merged: false, number: 7, node_id: 'PR_node', head: { sha: 'deadbeef', repo: { full_name: external ? 'other/sample' : repository.full_name } }, draft, mergeable, mergeable_state };
@@ -29,8 +29,8 @@ function fixture({ draft = false, mergeable = true, mergeable_state = 'clean', c
     },
     graphql: async (q, values) => { calls.ready.push(values.id); return {}; },
   };
-  const core = { info: message => calls.logs.push(message), warning: message => calls.warnings.push(message) };
-  return { calls, task: { github, core, owner, dryRun, include, exclude }, pr };
+  const core = { info: message => calls.logs.push(message), warning: message => calls.warnings.push(message), setFailed: message => calls.failures.push(message) };
+  return { calls, task: { github, core, owner, dryRun, include, exclude, expected }, pr };
 }
 
 test('squash merges clean ready PR with exact head SHA', async () => {
@@ -137,4 +137,19 @@ test('GitHub merge API rejection is recorded without bypassing protections', asy
   assert.equal(result.merged, 0);
   assert.equal(result.errors, 1);
   assert.equal(calls.warnings.length, 2);
+});
+
+test('explicit expected repo visible to PAT passes coverage audit', async () => {
+  const { task, calls } = fixture({ expected: 'sample' });
+  const result = await run(task);
+  assert.equal(result.errors, 0);
+  assert.equal(calls.failures.length, 0);
+});
+
+test('PAT missing a critical expected repo fails visibly', async () => {
+  const { task, calls } = fixture({ expected: 'nigeria-finops-platform' });
+  const result = await run(task);
+  assert.equal(result.errors, 1);
+  assert.equal(calls.failures.length, 1);
+  assert.match(calls.warnings[0], /lacks repository visibility/);
 });
