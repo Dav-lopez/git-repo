@@ -24,7 +24,7 @@ WARNING: This merges old and new conflict-free PRs across every accessible owned
 
 ## Timing and limitations
 
-Cron is */20 * * * * (UTC). GitHub can delay or skip scheduled executions, and may disable scheduled workflows in inactive repositories. The controller needs Actions enabled.
+Cron is 7,27,47 * * * * (UTC), every 20 minutes at minutes :07, :27, and :47. This avoids peak minute :00 because GitHub can delay or drop scheduled events under load; it does not guarantee reliable real-time execution. A push that changes the workflow file on main also triggers one live verification scan. GitHub can disable scheduled workflows in inactive repositories. The controller needs Actions enabled. Check https://github.com/Dav-lopez/git-repo/actions for recent runs with event=schedule.
 
 The built-in GitHub Actions GITHUB_TOKEN cannot merge pull requests in other repositories. The AUTO_MERGE_TOKEN secret is required for account-wide access.
 
