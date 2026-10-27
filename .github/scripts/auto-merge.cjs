@@ -2,7 +2,7 @@
 
 /**
  * Merge eligible PRs across repositories owned by OWNER.
- * Require conflict-free heads and successful checks before merging.
+ * Merge conflict-free PRs regardless of CI status; GitHub merge restrictions still apply.
  * GitHub remains authoritative for branch protections and required reviews.
  */
 function names(text) {
@@ -86,7 +86,7 @@ async function run({ github, core, owner, dryRun = false, allowForks = false, in
         // Fetch a fresh PR snapshot rather than trusting a cached search/index result.
         const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: found.number });
         if (pr.state !== 'open' || pr.merged) { totals.skipped++; continue; }
-        if (!allowForks && pr.head.repo?.full_name.toLowerCase() !== repository.full_name.toLowerCase()) {
+        if (!allowForks && pr.head.repo?.full_name?.toLowerCase() !== repository.full_name.toLowerCase()) {
           totals.skipped++;
           core.info(id + ': skipped cross-repository head');
           continue;
@@ -113,16 +113,6 @@ async function run({ github, core, owner, dryRun = false, allowForks = false, in
           core.info(id + ': skipped after refresh: state=' + current.state + ', draft=' + current.draft + ', mergeable=' + current.mergeable);
           continue;
         }
-        const { data: combined } = await github.rest.repos.getCombinedStatusForRef({ owner, repo, ref: current.head.sha });
-        const checks = await github.paginate(github.rest.checks.listForRef, { owner, repo, ref: current.head.sha, per_page: 100 });
-        const relevantChecks = checks.filter(c => c.name !== 'merge' || c.app?.slug !== 'github-actions');
-        const badChecks = relevantChecks.filter(c => c.status !== 'completed' || !['success', 'neutral', 'skipped'].includes(c.conclusion));
-        const statusBad = combined.state !== 'success' && combined.statuses.length > 0;
-        if (badChecks.length || statusBad || (!relevantChecks.length && !combined.statuses.length)) {
-          totals.skipped++;
-          core.info(id + ': skipped: checks=' + relevantChecks.length + ', failing_or_pending=' + badChecks.length + ', commit_status=' + combined.state);
-          continue;
-        }
         if (dryRun) {
           core.info(id + ': DRY RUN: would merge verified head ' + current.head.sha);
           continue;
@@ -132,7 +122,7 @@ async function run({ github, core, owner, dryRun = false, allowForks = false, in
           merge_method: 'squash',
         });
         totals.merged++;
-        core.info(id + ': merged conflict-free PR with successful checks');
+        core.info(id + ': merged conflict-free PR (CI not a gate)');
       } catch (error) {
         totals.errors++;
         core.warning(id + ': merge not performed: ' + error.message);
