@@ -32,7 +32,7 @@ function fixture({ draft = false, mergeable = true, mergeable_state = 'clean', c
       if (func === github.rest.checks.listForRef) return checkStatus === 'none' ? [] : [{ name: 'unit-tests', status: checkStatus === 'pending' ? 'in_progress' : 'completed', conclusion: checkStatus === 'pending' ? null : checkStatus }];
       throw new Error('Unexpected paginate call');
     },
-    graphql: async (q, values) => { calls.ready.push(values.id); return {}; },
+    graphql: async (q, values) => { calls.ready.push(values.id); pr.draft = false; return {}; },
   };
   const core = { info: message => calls.logs.push(message), warning: message => calls.warnings.push(message), setFailed: message => calls.failures.push(message) };
   return { calls, task: { github, core, owner, dryRun, include, exclude, expected }, pr };
@@ -45,12 +45,12 @@ test('squash merges clean ready PR with exact head SHA', async () => {
   assert.deepEqual(calls.merges, [{ owner: 'Dav-lopez', repo: 'sample', pull_number: 7, sha: 'deadbeef', merge_method: 'squash' }]);
 });
 
-test('includes draft PRs by marking ready; never merges the same pass', async () => {
+test('includes draft PRs by marking ready and merging in the same pass', async () => {
   const { task, calls } = fixture({ draft: true, mergeable_state: 'draft' });
   const result = await run(task);
   assert.equal(result.draftsReady, 1);
   assert.deepEqual(calls.ready, ['PR_node']);
-  assert.equal(calls.merges.length, 0);
+  assert.equal(calls.merges.length, 1);
 });
 
 test('conflicting PR is skipped', async () => {
@@ -127,12 +127,12 @@ test('unknown GitHub mergeability is skipped until recomputed', async () => {
   assert.equal(calls.merges.length, 0);
 });
 
-test('draft with failed CI is marked ready but not merged that run', async () => {
+test('draft with failed CI is marked ready and merged in the same run', async () => {
   const { task, calls } = fixture({ draft: true, checkStatus: 'failure', mergeable_state: 'unstable' });
   const result = await run(task);
   assert.equal(result.draftsReady, 1);
   assert.equal(calls.ready.length, 1);
-  assert.equal(calls.merges.length, 0);
+  assert.equal(calls.merges.length, 1);
 });
 
 test('GitHub merge API rejection is recorded without bypassing protections', async () => {
