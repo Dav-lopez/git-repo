@@ -2,8 +2,8 @@
 
 /**
  * Merge eligible PRs across repositories owned by OWNER.
- * A true GitHub mergeable flag means no file-level conflicts. Ignore CI status,
- * but let GitHub reject merges blocked by rulesets, approvals or branch protection.
+ * Require conflict-free heads and successful checks before merging.
+ * GitHub remains authoritative for branch protections and required reviews.
  */
 function names(text) {
   return new Set((text || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean));
@@ -93,29 +93,46 @@ async function run({ github, core, owner, dryRun = false, allowForks = false, in
         }
         if (pr.mergeable !== true) {
           totals.skipped++;
-          core.info(id + ': GitHub mergeable=' + pr.mergeable + '; waiting/requires conflict resolution');
+          core.info(id + ': skipped: mergeable=' + pr.mergeable + ' (conflict or pending GitHub computation)');
           continue;
         }
         if (pr.draft) {
-          // GitHub prohibits merging draft PRs. Mark them ready, then re-evaluate
-          // on the next run once GitHub recalculates mergeability and protections.
-          if (!dryRun) {
-            await github.graphql('mutation($id: ID!) { markPullRequestReadyForReview(input: {pullRequestId: $id}) { clientMutationId } }', { id: pr.node_id });
+          if (dryRun) {
+            totals.draftsReady++;
+            core.info(id + ': DRY RUN: would mark draft ready and recheck');
+            continue;
           }
+          await github.graphql('mutation($id: ID!) { markPullRequestReadyForReview(input: {pullRequestId: $id}) { clientMutationId } }', { id: pr.node_id });
           totals.draftsReady++;
-          core.info(id + ': ' + (dryRun ? 'would mark' : 'marked') + ' draft ready for review; will recheck conflict state before merge');
+          core.info(id + ': marked ready for review');
+        }
+        // Always refresh after draft transition and after earlier PR merges.
+        const { data: current } = await github.rest.pulls.get({ owner, repo, pull_number: found.number });
+        if (current.state !== 'open' || current.draft || current.mergeable !== true) {
+          totals.skipped++;
+          core.info(id + ': skipped after refresh: state=' + current.state + ', draft=' + current.draft + ', mergeable=' + current.mergeable);
+          continue;
+        }
+        const { data: combined } = await github.rest.repos.getCombinedStatusForRef({ owner, repo, ref: current.head.sha });
+        const checks = await github.paginate(github.rest.checks.listForRef, { owner, repo, ref: current.head.sha, per_page: 100 });
+        const relevantChecks = checks.filter(c => c.name !== 'merge' || c.app?.slug !== 'github-actions');
+        const badChecks = relevantChecks.filter(c => c.status !== 'completed' || !['success', 'neutral', 'skipped'].includes(c.conclusion));
+        const statusBad = combined.state !== 'success' && combined.statuses.length > 0;
+        if (badChecks.length || statusBad || (!relevantChecks.length && !combined.statuses.length)) {
+          totals.skipped++;
+          core.info(id + ': skipped: checks=' + relevantChecks.length + ', failing_or_pending=' + badChecks.length + ', commit_status=' + combined.state);
           continue;
         }
         if (dryRun) {
-          core.info(id + ': DRY RUN: would merge conflict-free head ' + pr.head.sha + '; CI is not a gate');
+          core.info(id + ': DRY RUN: would merge verified head ' + current.head.sha);
           continue;
         }
         await github.rest.pulls.merge({
-          owner, repo, pull_number: pr.number, sha: pr.head.sha,
+          owner, repo, pull_number: pr.number, sha: current.head.sha,
           merge_method: 'squash',
         });
         totals.merged++;
-        core.info(id + ': merged conflict-free PR (CI was not a gate)');
+        core.info(id + ': merged conflict-free PR with successful checks');
       } catch (error) {
         totals.errors++;
         core.warning(id + ': merge not performed: ' + error.message);
