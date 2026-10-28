@@ -9,7 +9,20 @@ function names(text) {
   return new Set((text || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean));
 }
 
-async function run({ github, core, owner, dryRun = false, allowForks = false, include, exclude, expected, maxMerges = 10 }) {
+// A null mergeable flag means GitHub is still calculating the merge state.
+// It is not a conflict. Re-fetch the PR with bounded backoff before deciding.
+async function resolvePull(github, { owner, repo, pull_number }, sleep, attempts = 8) {
+  let pr;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    ({ data: pr } = await github.rest.pulls.get({ owner, repo, pull_number }));
+    if (pr.state !== 'open' || pr.merged || pr.mergeable !== null && pr.mergeable !== undefined) return pr;
+    if (attempt + 1 < attempts) await sleep(Math.min(2000, 500 * (attempt + 1)));
+  }
+  return pr;
+}
+
+async function run({ github, core, owner, dryRun = false, allowForks = false, include, exclude, expected, maxMerges = 100,
+  sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) }) {
   if (!owner || !/^[-\w]+$/.test(owner)) throw new Error('OWNER must be a GitHub username');
   const listedRepos = await github.paginate(github.rest.repos.listForAuthenticatedUser, {
     affiliation: 'owner', visibility: 'all', per_page: 100,
@@ -84,7 +97,7 @@ async function run({ github, core, owner, dryRun = false, allowForks = false, in
       }
       try {
         // Fetch a fresh PR snapshot rather than trusting a cached search/index result.
-        const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: found.number });
+        const pr = await resolvePull(github, { owner, repo, pull_number: found.number }, sleep);
         if (pr.state !== 'open' || pr.merged) { totals.skipped++; continue; }
         if (!allowForks && pr.head.repo?.full_name?.toLowerCase() !== repository.full_name.toLowerCase()) {
           totals.skipped++;
@@ -93,7 +106,9 @@ async function run({ github, core, owner, dryRun = false, allowForks = false, in
         }
         if (pr.mergeable !== true) {
           totals.skipped++;
-          core.info(id + ': skipped: mergeable=' + pr.mergeable + ' (conflict or pending GitHub computation)');
+          core.info(id + (pr.mergeable === false
+            ? ': confirmed merge conflict; skipped'
+            : ': mergeability still unknown after retries; will retry next run'));
           continue;
         }
         if (pr.draft) {
@@ -107,10 +122,10 @@ async function run({ github, core, owner, dryRun = false, allowForks = false, in
           core.info(id + ': marked ready for review');
         }
         // Always refresh after draft transition and after earlier PR merges.
-        const { data: current } = await github.rest.pulls.get({ owner, repo, pull_number: found.number });
+        const current = await resolvePull(github, { owner, repo, pull_number: found.number }, sleep);
         if (current.state !== 'open' || current.draft || current.mergeable !== true) {
           totals.skipped++;
-          core.info(id + ': skipped after refresh: state=' + current.state + ', draft=' + current.draft + ', mergeable=' + current.mergeable);
+          core.info(id + ': skipped after refresh: state=' + current.state + ', draft=' + current.draft + ', mergeable=' + current.mergeable + (current.mergeable == null ? ' (unknown after retries)' : ''));
           continue;
         }
         if (dryRun) {
@@ -137,4 +152,4 @@ async function run({ github, core, owner, dryRun = false, allowForks = false, in
   return totals;
 }
 
-module.exports = { run, names };
+module.exports = { run, names, resolvePull };
