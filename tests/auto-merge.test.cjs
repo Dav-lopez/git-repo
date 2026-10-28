@@ -3,8 +3,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { run } = require('../.github/scripts/auto-merge.cjs');
 
-function fixture({ draft = false, mergeable = true, mergeable_state = 'clean', checkStatus = 'success', fork = false, external = false, dryRun = false, include, exclude, expected, directAllowed = false } = {}) {
-  const calls = { merges: [], ready: [], logs: [], warnings: [], failures: [], probes: [] };
+function fixture({ draft = false, mergeable = true, mergeable_state = 'clean', checkStatus = 'success', resolveAfter = 0, fork = false, external = false, dryRun = false, include, exclude, expected, directAllowed = false } = {}) {
+  const calls = { merges: [], ready: [], logs: [], warnings: [], failures: [], probes: [], pullGets: 0 };
   const owner = 'Dav-lopez', repo = 'sample';
   const repository = { name: repo, full_name: owner + '/' + repo, owner: { login: owner }, archived: false, disabled: false, fork };
   const pr = { state: 'open', merged: false, number: 7, node_id: 'PR_node', head: { sha: 'deadbeef', repo: { full_name: external ? 'other/sample' : repository.full_name } }, draft, mergeable, mergeable_state };
@@ -21,7 +21,7 @@ function fixture({ draft = false, mergeable = true, mergeable_state = 'clean', c
       },
       pulls: {
         list: () => {},
-        get: async () => ({ data: pr }),
+        get: async () => { calls.pullGets++; if (resolveAfter && calls.pullGets >= resolveAfter) pr.mergeable = true; return { data: pr }; },
         merge: async (args) => { calls.merges.push(args); return { data: { merged: true } }; },
       },
       checks: { listForRef: () => {} },
@@ -35,7 +35,7 @@ function fixture({ draft = false, mergeable = true, mergeable_state = 'clean', c
     graphql: async (q, values) => { calls.ready.push(values.id); pr.draft = false; return {}; },
   };
   const core = { info: message => calls.logs.push(message), warning: message => calls.warnings.push(message), setFailed: message => calls.failures.push(message) };
-  return { calls, task: { github, core, owner, dryRun, include, exclude, expected }, pr };
+  return { calls, task: { github, core, owner, dryRun, include, exclude, expected, sleep: async () => {} }, pr };
 }
 
 test('squash merges clean ready PR with exact head SHA', async () => {
@@ -125,6 +125,23 @@ test('unknown GitHub mergeability is skipped until recomputed', async () => {
   const { task, calls } = fixture({ mergeable: null });
   assert.equal((await run(task)).skipped, 1);
   assert.equal(calls.merges.length, 0);
+});
+
+test('temporary null mergeability is retried and merged within same run', async () => {
+  const { task, calls } = fixture({ mergeable: null, resolveAfter: 4 });
+  const result = await run(task);
+  assert.equal(result.merged, 1);
+  assert.ok(calls.pullGets >= 4);
+  assert.equal(calls.merges.length, 1);
+});
+
+test('null mergeability never triggers a speculative merge', async () => {
+  const { task, calls } = fixture({ mergeable: null });
+  const result = await run(task);
+  assert.equal(result.skipped, 1);
+  assert.equal(result.merged, 0);
+  assert.ok(calls.pullGets >= 8);
+  assert.match(calls.logs.join(' '), /unknown after retries/);
 });
 
 test('draft with failed CI is marked ready and merged in the same run', async () => {
