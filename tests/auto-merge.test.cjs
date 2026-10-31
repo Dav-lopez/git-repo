@@ -45,6 +45,18 @@ test('squash merges clean ready PR with exact head SHA', async () => {
   assert.deepEqual(calls.merges, [{ owner: 'Dav-lopez', repo: 'sample', pull_number: 7, sha: 'deadbeef', merge_method: 'squash' }]);
 });
 
+test('merges unsorted GitHub PR listings in ascending PR-number order', async () => {
+  const { task, calls, pr } = fixture();
+  const previous = task.github.paginate;
+  task.github.paginate = async (method) => method === task.github.rest.pulls.list
+    ? [{ number: 9 }, { number: 3 }, { number: 7 }]
+    : previous(method);
+  task.github.rest.pulls.get = async ({ pull_number }) =>
+    ({ data: { ...pr, number: pull_number } });
+  await run(task);
+  assert.deepEqual(calls.merges.map(m => m.pull_number), [3, 7, 9]);
+});
+
 test('includes draft PRs by marking ready and merging in the same pass', async () => {
   const { task, calls } = fixture({ draft: true, mergeable_state: 'draft' });
   const result = await run(task);
