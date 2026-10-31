@@ -81,7 +81,10 @@ async function run({ github, core, owner, dryRun = false, allowForks = false, in
     const repo = repository.name;
     let prs;
     try {
-      prs = await github.paginate(github.rest.pulls.list, { owner, repo, state: 'open', per_page: 100 });
+      // Always process the oldest PR number first, irrespective of GitHub API ordering.
+      // Re-check mergeability after each merge because the base branch changes.
+      prs = (await github.paginate(github.rest.pulls.list, { owner, repo, state: 'open', per_page: 100 }))
+        .sort((a, b) => a.number - b.number);
     } catch (error) {
       totals.errors++;
       core.warning(repo + ': unable to list PRs: ' + error.message);
