@@ -164,6 +164,21 @@ test('draft with failed CI is marked ready and merged in the same run', async ()
   assert.equal(calls.merges.length, 1);
 });
 
+test('late GitHub merge conflict is a safe skip rather than a failed scan', async () => {
+  const { task, calls } = fixture();
+  task.github.rest.pulls.merge = async () => {
+    const error = new Error('Pull Request has merge conflicts');
+    error.status = 405;
+    throw error;
+  };
+  const result = await run(task);
+  assert.equal(result.merged, 0);
+  assert.equal(result.skipped, 1);
+  assert.equal(result.errors, 0);
+  assert.deepEqual(calls.failures, []);
+  assert.match(calls.logs.join(' '), /confirmed merge conflict at merge time/);
+});
+
 test('GitHub merge API rejection is recorded without bypassing protections', async () => {
   const { task, calls } = fixture({ mergeable_state: 'blocked' });
   task.github.rest.pulls.merge = async () => { throw new Error('Branch protection prohibits merging'); };
