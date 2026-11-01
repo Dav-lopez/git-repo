@@ -4,6 +4,9 @@ on:
   schedule:
     # GitHub schedule is best-effort; request checks every five minutes.
     - cron: '2-59/5 * * * *'
+    # Independent hourly schedule attempt, offset from the five-minute grid.
+    # Both schedules are best-effort; external dispatch is needed for strict SLAs.
+    - cron: '19 * * * *'
   push:
     branches: [main]
     paths:
