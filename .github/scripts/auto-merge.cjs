@@ -142,6 +142,13 @@ async function run({ github, core, owner, dryRun = false, allowForks = false, in
         totals.merged++;
         core.info(id + ': merged conflict-free PR (CI not a gate)');
       } catch (error) {
+        // Mergeability can change between our check and the REST merge call.
+        // A late conflict is a normal skip, not an automation failure.
+        if (/Pull Request has merge conflicts/i.test(error.message || '')) {
+          totals.skipped++;
+          core.info(id + ': confirmed merge conflict at merge time; skipped');
+          continue;
+        }
         totals.errors++;
         core.warning(id + ': merge not performed: ' + error.message);
       }
