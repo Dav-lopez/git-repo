@@ -17,3 +17,4 @@ jobs:
         with:
           node-version: '22'
       - run: node --test tests/auto-merge.test.cjs
+      - run: node --test cloudflare-merge-trigger/tests/dispatch.test.mjs

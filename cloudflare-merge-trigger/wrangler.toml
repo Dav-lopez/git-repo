@@ -1,0 +1,8 @@
+# Deploy in Cloudflare Workers (Free or Paid)
+# Cron triggers are in UTC; this dispatches once per hour, every hour.
+name = "dav-lopez-hourly-merge-check"
+main = "src/index.mjs"
+compatibility_date = "2026-11-01"
+
+[triggers]
+crons = ["19 * * * *"]
